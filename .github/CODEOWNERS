@@ -1,0 +1,11 @@
+# Default owner for everything not matched below.
+*                               @Bry-Dev
+
+# Security-sensitive areas — changes here affect cryptography, vault
+# storage, or backup/export format and should get extra scrutiny even
+# while there is only one maintainer.
+/src/services/crypto/          @Bry-Dev
+/src/services/vault/           @Bry-Dev
+/src/services/storage/         @Bry-Dev
+/src/services/backup/          @Bry-Dev
+/SECURITY.md                   @Bry-Dev

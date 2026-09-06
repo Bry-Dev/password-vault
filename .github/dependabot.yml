@@ -1,0 +1,42 @@
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      vue-ecosystem:
+        patterns:
+          - "vue*"
+          - "@vue/*"
+          - "pinia"
+        update-types:
+          - minor
+          - patch
+      build-tooling:
+        patterns:
+          - "vite*"
+          - "@vitejs/*"
+          - "tailwindcss"
+          - "@tailwindcss/*"
+          - "typescript"
+          - "vue-tsc"
+        update-types:
+          - minor
+          - patch
+      test-tooling:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
+        update-types:
+          - minor
+          - patch
+    # Security updates always open their own PR regardless of grouping and
+    # must be reviewed and merged manually — no auto-merge is configured.
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

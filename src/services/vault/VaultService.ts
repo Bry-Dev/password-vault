@@ -13,7 +13,7 @@ const MASTER_WRAP_AAD = 'local-password-vault:master-wrap:v1'
 const RECOVERY_WRAP_AAD = 'local-password-vault:recovery-wrap:v1'
 const entryAad = (id: string) => `local-password-vault:entry:${id}:v1`
 
-class VaultService {
+export class VaultService {
   private dek: CryptoKey | null = null
 
   constructor(private readonly storage: StorageAdapter) {}

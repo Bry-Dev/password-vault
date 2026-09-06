@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Bry-Dev/password-vault/security/advisories/new
+    about: >-
+      Do not open a public issue for anything that could expose a
+      vulnerability. Use private vulnerability reporting instead — see
+      SECURITY.md.

@@ -1,0 +1,40 @@
+name: Feature request
+description: Suggest an improvement or new capability.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Requested behavior
+      description: What should the app do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use case
+      description: What problem does this solve for you?
+    validations:
+      required: true
+
+  - type: textarea
+    id: security-implications
+    attributes:
+      label: Security/privacy implications
+      description: >-
+        Does this affect encryption, key handling, vault storage, backups,
+        or introduce any network communication? If unsure, say so.
+    validations:
+      required: false
+
+  - type: textarea
+    id: offline-implications
+    attributes:
+      label: Offline behavior implications
+      description: >-
+        Should this work with no network connection? Does it change what
+        happens offline?
+    validations:
+      required: false

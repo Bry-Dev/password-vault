@@ -1,0 +1,83 @@
+name: Bug report
+description: Report a problem with the app that is not a security vulnerability.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not include real vault data in this report.**
+
+        Never paste or attach:
+        - your master password or recovery key
+        - an exported `.pvault` backup file
+        - decrypted vault entries (real usernames, passwords, notes)
+        - any raw encryption key material
+
+        If this bug is a potential **security vulnerability** (e.g. it could
+        leak vault contents, bypass encryption, or weaken the KDF/AES-GCM
+        usage), stop here and use private vulnerability reporting instead —
+        see [SECURITY.md](../../SECURITY.md). Do not describe an exploitable
+        vulnerability in a public issue.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What went wrong?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Use fake/example data only — never real credentials.
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-mode
+    attributes:
+      label: Installed PWA or browser tab?
+      options:
+        - Installed PWA (added to home screen / installed app)
+        - Browser tab (not installed)
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser/device
+      placeholder: e.g. Safari on iPhone 15, iOS 18.2
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: e.g. iOS 18.2, macOS 15, Windows 11
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: App version / commit
+      description: Version shown in the app, or the git commit hash if you know it.
+    validations:
+      required: false

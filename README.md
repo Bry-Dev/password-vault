@@ -2,6 +2,12 @@
 
 A Vue 3 + TypeScript + Tailwind password-vault scaffold designed for **iOS PWA use first**, with no backend and no cloud sync.
 
+> **Security status:** This project is under active development and has
+> **not** undergone an independent security audit. Do not yet rely on it as
+> the sole storage location for critical credentials. See
+> [SECURITY.md](SECURITY.md) for the full threat model and how to report
+> vulnerabilities.
+
 ## Why this architecture
 
 The web app files can be hosted on Cloudflare Pages (or any HTTPS static host), while the vault stays on the device in IndexedDB. The app shell is cached by a service worker so the installed PWA can continue working offline.
@@ -55,6 +61,14 @@ Production build:
 ```bash
 npm run build
 npm run preview
+```
+
+Validation (also run in CI, see `.github/workflows/ci.yml`):
+
+```bash
+npm run typecheck
+npm test
+npm run build
 ```
 
 ## iPhone/PWA deployment
@@ -139,3 +153,18 @@ The UI should not need to know which storage implementation is active.
 ## Security scope
 
 This is a development scaffold with a sensible architecture, **not an audited password manager**. Do not market or rely on it as production security software until it has undergone threat modeling, testing, dependency review, platform-specific storage review, and independent security assessment.
+
+See [SECURITY.md](SECURITY.md) for the threat model and how to report a vulnerability privately.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local setup, the branch/PR workflow, and coding expectations — including extra requirements for changes to cryptography, recovery, or storage.
+
+If you maintain this repository on GitHub, see
+[docs/GITHUB_SECURITY_SETUP.md](docs/GITHUB_SECURITY_SETUP.md) for repository
+settings (branch protection, Dependabot, secret scanning, CodeQL, private
+vulnerability reporting) that must be enabled outside of this repo's files.
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE).
