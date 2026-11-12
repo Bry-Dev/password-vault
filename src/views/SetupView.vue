@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import StatusAlert from '@/components/ui/StatusAlert.vue'
+import RestoreBackupButton from '@/components/vault/RestoreBackupButton.vue'
 import { useVaultStore } from '@/stores/vault'
 
 const vault = useVaultStore()
@@ -9,6 +10,8 @@ const router = useRouter()
 const password = ref('')
 const confirmPassword = ref('')
 const error = ref('')
+const passwordError = ref('')
+const confirmPasswordError = ref('')
 const recoveryKey = ref('')
 const copied = ref(false)
 const confirmedSaved = ref(false)
@@ -18,17 +21,34 @@ onMounted(async () => {
   if (vault.initialized) await router.replace('/unlock')
 })
 
+function passwordRuleError(value: string): string {
+  if (value.length < 8) return 'Use a master password of at least 8 characters.'
+  const missing: string[] = []
+  if (!/[a-z]/.test(value)) missing.push('a lowercase letter')
+  if (!/[A-Z]/.test(value)) missing.push('an uppercase letter')
+  if (!/[0-9]/.test(value)) missing.push('a number')
+  if (!/[^A-Za-z0-9]/.test(value)) missing.push('a symbol')
+  return missing.length ? `Add ${missing.join(', ')} to your master password.` : ''
+}
+
+function validatePassword(): boolean {
+  passwordError.value = passwordRuleError(password.value)
+  // Re-check the confirmation if the user already filled it in, so a stale mismatch message clears.
+  if (confirmPassword.value) validateConfirmPassword()
+  return !passwordError.value
+}
+
+function validateConfirmPassword(): boolean {
+  confirmPasswordError.value = password.value !== confirmPassword.value ? 'The passwords do not match.' : ''
+  return !confirmPasswordError.value
+}
+
 async function createVault(): Promise<void> {
   error.value = ''
 
-  if (password.value.length < 12) {
-    error.value = 'Use a master password of at least 12 characters for this scaffold.'
-    return
-  }
-  if (password.value !== confirmPassword.value) {
-    error.value = 'The passwords do not match.'
-    return
-  }
+  const passwordValid = validatePassword()
+  const confirmValid = validateConfirmPassword()
+  if (!passwordValid || !confirmValid) return
 
   try {
     recoveryKey.value = await vault.setup(password.value)
@@ -43,6 +63,10 @@ async function copyRecoveryKey(): Promise<void> {
   await navigator.clipboard.writeText(recoveryKey.value)
   copied.value = true
   window.setTimeout(() => (copied.value = false), 1500)
+}
+
+async function onRestored(): Promise<void> {
+  await router.replace({ path: '/unlock', query: { restored: '1' } })
 }
 
 async function continueToVault(): Promise<void> {
@@ -70,8 +94,12 @@ async function continueToVault(): Promise<void> {
             type="password"
             autocomplete="new-password"
             required
-            class="w-full rounded-xl border border-slate-300 px-3 py-3 outline-none focus:border-slate-500"
+            :aria-invalid="Boolean(passwordError)"
+            class="w-full rounded-xl border px-3 py-3 outline-none"
+            :class="passwordError ? 'border-red-400 focus:border-red-500' : 'border-slate-300 focus:border-slate-500'"
+            @blur="validatePassword"
           />
+          <p v-if="passwordError" class="mt-1 text-sm text-red-600">{{ passwordError }}</p>
         </div>
         <div>
           <label class="mb-1 block text-sm font-medium text-slate-700">Confirm master password</label>
@@ -80,8 +108,12 @@ async function continueToVault(): Promise<void> {
             type="password"
             autocomplete="new-password"
             required
-            class="w-full rounded-xl border border-slate-300 px-3 py-3 outline-none focus:border-slate-500"
+            :aria-invalid="Boolean(confirmPasswordError)"
+            class="w-full rounded-xl border px-3 py-3 outline-none"
+            :class="confirmPasswordError ? 'border-red-400 focus:border-red-500' : 'border-slate-300 focus:border-slate-500'"
+            @blur="validateConfirmPassword"
           />
+          <p v-if="confirmPasswordError" class="mt-1 text-sm text-red-600">{{ confirmPasswordError }}</p>
         </div>
         <button
           :disabled="vault.busy"
@@ -90,6 +122,14 @@ async function continueToVault(): Promise<void> {
           {{ vault.busy ? 'Creating encrypted vault…' : 'Create vault' }}
         </button>
       </form>
+
+      <div class="mt-6 border-t border-slate-200 pt-5">
+        <p class="text-sm font-semibold text-slate-800">Already have a backup?</p>
+        <p class="mt-1 text-xs leading-5 text-slate-500">
+          Restore an encrypted .pvault file on a new device, or after this browser's data was cleared.
+        </p>
+        <RestoreBackupButton class="mt-3" :replaces-existing="false" @restored="onRestored" />
+      </div>
     </template>
 
     <template v-else>

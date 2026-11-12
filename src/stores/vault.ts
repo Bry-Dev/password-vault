@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import type { VaultEntry, VaultEntryInput } from '@/types/vault'
 import { vaultService } from '@/services/vault/VaultService'
 import { backupService } from '@/services/backup/BackupService'
+import { requestPersistentStorage } from '@/services/storage/persistence'
 
 export const useVaultStore = defineStore('vault', () => {
   const initialized = ref(false)
@@ -10,13 +11,20 @@ export const useVaultStore = defineStore('vault', () => {
   const unlocked = ref(false)
   const entries = ref<VaultEntry[]>([])
   const busy = ref(false)
+  const lastBackupAt = ref<string | undefined>(undefined)
 
   const entryCount = computed(() => entries.value.length)
 
   async function bootstrap(): Promise<void> {
     if (bootstrapped.value) return
     initialized.value = await vaultService.isInitialized()
+    lastBackupAt.value = await backupService.getLastBackupAt()
     bootstrapped.value = true
+  }
+
+  /** Best effort: ask the browser not to evict vault storage. Never blocks or throws. */
+  function keepStorage(): void {
+    void requestPersistentStorage()
   }
 
   async function setup(masterPassword: string): Promise<string> {
@@ -26,6 +34,7 @@ export const useVaultStore = defineStore('vault', () => {
       initialized.value = true
       unlocked.value = true
       entries.value = []
+      keepStorage()
       return recoveryKey
     } finally {
       busy.value = false
@@ -37,6 +46,7 @@ export const useVaultStore = defineStore('vault', () => {
     try {
       await vaultService.unlockWithMasterPassword(password)
       unlocked.value = true
+      keepStorage()
       await refreshEntries()
     } finally {
       busy.value = false
@@ -48,6 +58,7 @@ export const useVaultStore = defineStore('vault', () => {
     try {
       await vaultService.unlockWithRecoveryKey(recoveryKey)
       unlocked.value = true
+      keepStorage()
       await refreshEntries()
     } finally {
       busy.value = false
@@ -59,6 +70,7 @@ export const useVaultStore = defineStore('vault', () => {
     try {
       await vaultService.recoverAndResetMasterPassword(recoveryKey, newPassword)
       unlocked.value = true
+      keepStorage()
       await refreshEntries()
     } finally {
       busy.value = false
@@ -87,12 +99,15 @@ export const useVaultStore = defineStore('vault', () => {
 
   async function exportBackup(): Promise<void> {
     await backupService.downloadBackup()
+    lastBackupAt.value = await backupService.getLastBackupAt()
   }
 
   async function importBackup(file: File): Promise<void> {
     lock()
     await backupService.importBackup(file)
     initialized.value = true
+    lastBackupAt.value = await backupService.getLastBackupAt()
+    keepStorage()
   }
 
   return {
@@ -101,6 +116,7 @@ export const useVaultStore = defineStore('vault', () => {
     unlocked,
     entries,
     busy,
+    lastBackupAt,
     entryCount,
     bootstrap,
     setup,

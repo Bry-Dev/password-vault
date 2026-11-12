@@ -2,15 +2,28 @@ import Dexie, { type EntityTable } from 'dexie'
 import type { StoredVaultEntry, VaultBackupFile, VaultMetadata } from '@/types/vault'
 import type { StorageAdapter } from './StorageAdapter'
 
+/** Non-secret app settings only. Never store secrets or plaintext vault data here. */
+interface SettingRecord {
+  key: 'lastBackupAt'
+  value: string
+}
+
 class VaultDatabase extends Dexie {
   metadata!: EntityTable<VaultMetadata, 'id'>
   entries!: EntityTable<StoredVaultEntry, 'id'>
+  settings!: EntityTable<SettingRecord, 'key'>
 
   constructor() {
     super('local-password-vault')
     this.version(1).stores({
       metadata: 'id',
       entries: 'id, updatedAt',
+    })
+    // v2: adds a settings table; existing metadata/entries are unchanged.
+    this.version(2).stores({
+      metadata: 'id',
+      entries: 'id, updatedAt',
+      settings: 'key',
     })
   }
 }
@@ -53,6 +66,14 @@ class IndexedDbStorage implements StorageAdapter {
       await db.metadata.put(backup.metadata)
       await db.entries.bulkPut(backup.entries)
     })
+  }
+
+  async getLastBackupAt(): Promise<string | undefined> {
+    return (await db.settings.get('lastBackupAt'))?.value
+  }
+
+  async setLastBackupAt(isoTimestamp: string): Promise<void> {
+    await db.settings.put({ key: 'lastBackupAt', value: isoTimestamp })
   }
 }
 

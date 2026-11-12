@@ -8,6 +8,7 @@ import type { StoredVaultEntry, VaultBackupFile, VaultMetadata } from '@/types/v
 export class InMemoryStorageAdapter implements StorageAdapter {
   private metadata: VaultMetadata | undefined
   private entries = new Map<string, StoredVaultEntry>()
+  private lastBackupAt: string | undefined
 
   async hasVault(): Promise<boolean> {
     return this.metadata !== undefined
@@ -40,5 +41,13 @@ export class InMemoryStorageAdapter implements StorageAdapter {
   async replaceFromBackup(backup: VaultBackupFile): Promise<void> {
     this.metadata = backup.metadata
     this.entries = new Map(backup.entries.map((entry) => [entry.id, entry]))
+  }
+
+  async getLastBackupAt(): Promise<string | undefined> {
+    return this.lastBackupAt
+  }
+
+  async setLastBackupAt(isoTimestamp: string): Promise<void> {
+    this.lastBackupAt = isoTimestamp
   }
 }

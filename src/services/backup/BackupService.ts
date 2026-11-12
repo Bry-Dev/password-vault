@@ -1,9 +1,37 @@
 import type { VaultBackupFile } from '@/types/vault'
+import type { StorageAdapter } from '@/services/storage/StorageAdapter'
 import { indexedDbStorage } from '@/services/storage/IndexedDbStorage'
+import { localDateStamp } from '@/utils/dateStamp'
 
-class BackupService {
+const UNSUPPORTED_FILE = 'This file is not a supported Local Vault backup.'
+
+function parseBackup(text: string): VaultBackupFile {
+  let parsed: Partial<VaultBackupFile>
+  try {
+    parsed = JSON.parse(text) as Partial<VaultBackupFile>
+  } catch {
+    throw new Error(UNSUPPORTED_FILE)
+  }
+
+  if (
+    !parsed ||
+    parsed.format !== 'local-password-vault' ||
+    parsed.version !== 1 ||
+    !parsed.metadata ||
+    parsed.metadata.id !== 'primary' ||
+    !Array.isArray(parsed.entries)
+  ) {
+    throw new Error(UNSUPPORTED_FILE)
+  }
+
+  return parsed as VaultBackupFile
+}
+
+export class BackupService {
+  constructor(private readonly storage: StorageAdapter) {}
+
   async createBackup(): Promise<VaultBackupFile> {
-    const metadata = await indexedDbStorage.getMetadata()
+    const metadata = await this.storage.getMetadata()
     if (!metadata) throw new Error('No vault exists on this device.')
 
     return {
@@ -11,7 +39,7 @@ class BackupService {
       version: 1,
       exportedAt: new Date().toISOString(),
       metadata,
-      entries: await indexedDbStorage.listEntries(),
+      entries: await this.storage.listEntries(),
     }
   }
 
@@ -21,25 +49,27 @@ class BackupService {
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = `local-vault-${new Date().toISOString().slice(0, 10)}.pvault`
+    anchor.download = `local-vault-${localDateStamp(new Date(backup.exportedAt))}.pvault`
     anchor.click()
-    URL.revokeObjectURL(url)
+    // Revoking synchronously can cancel the download in Safari; give it time to start.
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    await this.storage.setLastBackupAt(backup.exportedAt)
+  }
+
+  /** Replaces the local vault with the backup. Works on an empty (new or wiped) device. */
+  async restoreFromText(text: string): Promise<void> {
+    const backup = parseBackup(text)
+    await this.storage.replaceFromBackup(backup)
+    await this.storage.setLastBackupAt(backup.exportedAt)
   }
 
   async importBackup(file: File): Promise<void> {
-    const parsed = JSON.parse(await file.text()) as Partial<VaultBackupFile>
+    await this.restoreFromText(await file.text())
+  }
 
-    if (
-      parsed.format !== 'local-password-vault' ||
-      parsed.version !== 1 ||
-      !parsed.metadata ||
-      !Array.isArray(parsed.entries)
-    ) {
-      throw new Error('This file is not a supported Local Vault backup.')
-    }
-
-    await indexedDbStorage.replaceFromBackup(parsed as VaultBackupFile)
+  async getLastBackupAt(): Promise<string | undefined> {
+    return this.storage.getLastBackupAt()
   }
 }
 
-export const backupService = new BackupService()
+export const backupService = new BackupService(indexedDbStorage)
