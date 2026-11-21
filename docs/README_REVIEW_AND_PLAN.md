@@ -43,11 +43,10 @@ cleared on blur (errors now re-check on input).
 with key confirmation, restore flow (secret checked first, nothing changes on
 failure), share-sheet export, update banner and footer version.
 
-**Testing notes:** browser checks are Python Playwright scripts (setup,
-restore, share/export, update-on-production-build). They live in the session
-scratchpad, not the repo, so they may need recreating. On this Windows machine
-the webapp-testing `with_server.py` helper leaves servers running; stop
-leftovers on ports 5173/4173 after runs.
+**Testing notes:** unit tests: `npm test`. Browser checks (Python Playwright;
+setup, restore, share/export, update on a production build): `npm run test:e2e`,
+see `e2e/README.md`. The runner manages its own servers; ports 5173 and 4173
+must be free.
 
 ---
 
