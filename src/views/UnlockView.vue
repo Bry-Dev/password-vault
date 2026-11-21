@@ -2,7 +2,9 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import StatusAlert from '@/components/ui/StatusAlert.vue'
+import RestoreBackupButton from '@/components/vault/RestoreBackupButton.vue'
 import { useVaultStore } from '@/stores/vault'
+import { masterPasswordProblem } from '@/utils/masterPassword'
 
 const vault = useVaultStore()
 const router = useRouter()
@@ -11,7 +13,6 @@ const secret = ref('')
 const newPassword = ref('')
 const confirmNewPassword = ref('')
 const error = ref('')
-const importInput = ref<HTMLInputElement | null>(null)
 
 onMounted(async () => {
   await vault.bootstrap()
@@ -25,9 +26,8 @@ async function unlock(): Promise<void> {
     if (mode.value === 'master') {
       await vault.unlockWithMasterPassword(secret.value)
     } else {
-      if (newPassword.value.length < 12) {
-        throw new Error('Use a new master password of at least 12 characters.')
-      }
+      const problem = masterPasswordProblem(newPassword.value)
+      if (problem) throw new Error(problem)
       if (newPassword.value !== confirmNewPassword.value) {
         throw new Error('The new master passwords do not match.')
       }
@@ -42,26 +42,8 @@ async function unlock(): Promise<void> {
   }
 }
 
-async function importBackup(event: Event): Promise<void> {
-  const target = event.target as HTMLInputElement
-  const file = target.files?.[0]
-  if (!file) return
-
-  if (!window.confirm('Importing will replace the local vault currently stored on this device. Continue?')) {
-    target.value = ''
-    return
-  }
-
-  error.value = ''
-  try {
-    await vault.importBackup(file)
-    mode.value = 'master'
-    secret.value = ''
-  } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : 'Unable to import backup.'
-  } finally {
-    target.value = ''
-  }
+async function onRestored(): Promise<void> {
+  await router.replace('/vault')
 }
 </script>
 
@@ -139,13 +121,7 @@ async function importBackup(event: Event): Promise<void> {
     <div class="mt-6 border-t border-slate-200 pt-5">
       <p class="text-sm font-semibold text-slate-800">Restore an encrypted backup</p>
       <p class="mt-1 text-xs leading-5 text-slate-500">Use this after reinstalling the PWA or moving an exported vault to another device.</p>
-      <input ref="importInput" type="file" accept=".pvault,application/json" class="hidden" @change="importBackup" />
-      <button
-        class="mt-3 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
-        @click="importInput?.click()"
-      >
-        Import .pvault backup
-      </button>
+      <RestoreBackupButton class="mt-3" @restored="onRestored" />
     </div>
   </section>
 </template>

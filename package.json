@@ -11,7 +11,8 @@
     "build": "vue-tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc -b",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e": "python e2e/run_all.py"
   },
   "dependencies": {
     "dexie": "^4.4.5",

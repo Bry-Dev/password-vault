@@ -6,6 +6,7 @@ import VaultEntryForm from '@/components/vault/VaultEntryForm.vue'
 import StatusAlert from '@/components/ui/StatusAlert.vue'
 import type { VaultEntry, VaultEntryInput } from '@/types/vault'
 import { useVaultStore } from '@/stores/vault'
+import { describeBackupAge } from '@/utils/backupAge'
 
 const vault = useVaultStore()
 const router = useRouter()
@@ -13,6 +14,7 @@ const editorOpen = ref(false)
 const editingEntry = ref<VaultEntry | null>(null)
 const error = ref('')
 const search = ref('')
+const backupAge = computed(() => describeBackupAge(vault.lastBackupAt))
 
 const filteredEntries = computed(() => {
   const term = search.value.trim().toLowerCase()
@@ -94,6 +96,14 @@ async function exportBackup(): Promise<void> {
     </div>
 
     <StatusAlert v-if="error" kind="error" class="mt-4">{{ error }}</StatusAlert>
+
+    <p
+      class="mt-4 rounded-xl px-3 py-2 text-sm"
+      :class="backupAge.stale ? 'border border-amber-200 bg-amber-50 text-amber-900' : 'text-slate-500'"
+    >
+      {{ backupAge.label }}<template v-if="backupAge.stale">
+        — this vault exists only on this device. Export a backup and keep it somewhere safe.</template>
+    </p>
 
     <div class="mt-5 flex gap-2">
       <input

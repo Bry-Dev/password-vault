@@ -1,8 +1,10 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import type { VaultEntry, VaultEntryInput } from '@/types/vault'
+import type { VaultBackupFile, VaultEntry, VaultEntryInput } from '@/types/vault'
 import { vaultService } from '@/services/vault/VaultService'
-import { backupService } from '@/services/backup/BackupService'
+import { backupService, parseBackup } from '@/services/backup/BackupService'
+import type { DeliveryResult } from '@/services/backup/deliverBackupFile'
+import { requestPersistentStorage } from '@/services/storage/persistence'
 
 export const useVaultStore = defineStore('vault', () => {
   const initialized = ref(false)
@@ -10,23 +12,36 @@ export const useVaultStore = defineStore('vault', () => {
   const unlocked = ref(false)
   const entries = ref<VaultEntry[]>([])
   const busy = ref(false)
+  const lastBackupAt = ref<string | undefined>(undefined)
 
   const entryCount = computed(() => entries.value.length)
 
   async function bootstrap(): Promise<void> {
     if (bootstrapped.value) return
     initialized.value = await vaultService.isInitialized()
+    lastBackupAt.value = await backupService.getLastBackupAt()
     bootstrapped.value = true
   }
 
-  async function setup(masterPassword: string): Promise<string> {
+  /** Best effort: ask the browser not to evict vault storage. Never blocks or throws. */
+  function keepStorage(): void {
+    void requestPersistentStorage()
+  }
+
+  /** A fresh recovery key to show and confirm before anything is stored. */
+  function newRecoveryKey(): string {
+    return vaultService.newRecoveryKey()
+  }
+
+  /** Creates the vault with the master password and the recovery key the user confirmed. */
+  async function setup(masterPassword: string, recoveryKey: string): Promise<void> {
     busy.value = true
     try {
-      const recoveryKey = await vaultService.setup(masterPassword)
+      await vaultService.setup(masterPassword, recoveryKey)
       initialized.value = true
       unlocked.value = true
       entries.value = []
-      return recoveryKey
+      keepStorage()
     } finally {
       busy.value = false
     }
@@ -37,6 +52,7 @@ export const useVaultStore = defineStore('vault', () => {
     try {
       await vaultService.unlockWithMasterPassword(password)
       unlocked.value = true
+      keepStorage()
       await refreshEntries()
     } finally {
       busy.value = false
@@ -48,6 +64,7 @@ export const useVaultStore = defineStore('vault', () => {
     try {
       await vaultService.unlockWithRecoveryKey(recoveryKey)
       unlocked.value = true
+      keepStorage()
       await refreshEntries()
     } finally {
       busy.value = false
@@ -59,6 +76,7 @@ export const useVaultStore = defineStore('vault', () => {
     try {
       await vaultService.recoverAndResetMasterPassword(recoveryKey, newPassword)
       unlocked.value = true
+      keepStorage()
       await refreshEntries()
     } finally {
       busy.value = false
@@ -85,14 +103,39 @@ export const useVaultStore = defineStore('vault', () => {
     await refreshEntries()
   }
 
-  async function exportBackup(): Promise<void> {
-    await backupService.downloadBackup()
+  /** Returns 'cancelled' when the user dismissed the share sheet; that is not an error. */
+  async function exportBackup(): Promise<DeliveryResult> {
+    const result = await backupService.exportBackup()
+    lastBackupAt.value = await backupService.getLastBackupAt()
+    return result
   }
 
-  async function importBackup(file: File): Promise<void> {
-    lock()
-    await backupService.importBackup(file)
-    initialized.value = true
+  /** Parses and structure-checks a backup file. Nothing is decrypted or stored yet. */
+  async function readBackupFile(file: File): Promise<VaultBackupFile> {
+    return parseBackup(await file.text())
+  }
+
+  /** Number of encrypted entries on this device; readable while locked. */
+  async function storedEntryCount(): Promise<number> {
+    return vaultService.storedEntryCount()
+  }
+
+  /**
+   * Replaces the device vault with `backup` once `secret` is proven to open it.
+   * On failure nothing changes, including the current lock state.
+   */
+  async function restoreBackup(backup: VaultBackupFile, secret: string): Promise<void> {
+    busy.value = true
+    try {
+      await vaultService.restoreBackup(backup, secret)
+      initialized.value = true
+      unlocked.value = true
+      await refreshEntries()
+      lastBackupAt.value = await backupService.getLastBackupAt()
+      keepStorage()
+    } finally {
+      busy.value = false
+    }
   }
 
   return {
@@ -101,8 +144,10 @@ export const useVaultStore = defineStore('vault', () => {
     unlocked,
     entries,
     busy,
+    lastBackupAt,
     entryCount,
     bootstrap,
+    newRecoveryKey,
     setup,
     unlockWithMasterPassword,
     unlockWithRecoveryKey,
@@ -112,6 +157,8 @@ export const useVaultStore = defineStore('vault', () => {
     saveEntry,
     deleteEntry,
     exportBackup,
-    importBackup,
+    readBackupFile,
+    storedEntryCount,
+    restoreBackup,
   }
 })

@@ -3,8 +3,14 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
+import pkg from './package.json' with { type: 'json' }
 
 export default defineConfig({
+  // Non-secret build info shown in the footer, so you can tell which version a device runs.
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+    __APP_BUILT_AT__: JSON.stringify(new Date().toISOString()),
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -14,7 +20,8 @@ export default defineConfig({
     vue(),
     tailwindcss(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // Never reload underneath the user: a new version waits until they tap "Update now".
+      registerType: 'prompt',
       includeAssets: ['apple-touch-icon.png'],
       manifest: {
         name: 'Local Password Vault',
