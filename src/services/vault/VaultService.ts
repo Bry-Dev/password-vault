@@ -1,5 +1,6 @@
 import type {
   StoredVaultEntry,
+  VaultBackupFile,
   VaultEntry,
   VaultEntryInput,
   VaultMetadata,
@@ -8,10 +9,20 @@ import { bytesToBase64Url, base64UrlToBytes } from '@/utils/encoding'
 import { cryptoService, MASTER_KDF_ITERATIONS } from '@/services/crypto/CryptoService'
 import type { StorageAdapter } from '@/services/storage/StorageAdapter'
 import { indexedDbStorage } from '@/services/storage/IndexedDbStorage'
+import { masterPasswordProblem } from '@/utils/masterPassword'
 
 const MASTER_WRAP_AAD = 'local-password-vault:master-wrap:v1'
 const RECOVERY_WRAP_AAD = 'local-password-vault:recovery-wrap:v1'
 const entryAad = (id: string) => `local-password-vault:entry:${id}:v1`
+
+const WRONG_BACKUP_SECRET =
+  'That master password or recovery key does not open this backup. Nothing was changed.'
+const DAMAGED_BACKUP = 'This backup is damaged and cannot be restored. Nothing was changed.'
+
+function assertAcceptableMasterPassword(password: string): void {
+  const problem = masterPasswordProblem(password)
+  if (problem) throw new Error(problem)
+}
 
 export class VaultService {
   private dek: CryptoKey | null = null
@@ -26,22 +37,36 @@ export class VaultService {
     return this.dek !== null
   }
 
-  async setup(masterPassword: string): Promise<string> {
+  /** A fresh recovery key, shown and confirmed by the user before `setup` stores anything. */
+  newRecoveryKey(): string {
+    return cryptoService.generateRecoveryKey()
+  }
+
+  /**
+   * Creates the vault. Pass the recovery key the user has already confirmed they saved
+   * (from `newRecoveryKey`); one is generated when omitted. Returns the recovery key.
+   */
+  async setup(masterPassword: string, recoveryKey = this.newRecoveryKey()): Promise<string> {
+    assertAcceptableMasterPassword(masterPassword)
     if (await this.storage.hasVault()) {
       throw new Error('A vault already exists on this device.')
     }
 
+    let recoveryAesKey: CryptoKey
+    try {
+      recoveryAesKey = await cryptoService.recoveryKeyToAesKey(recoveryKey)
+    } catch {
+      throw new Error('Invalid recovery key.')
+    }
+
     const salt = cryptoService.randomSalt()
     const dekBytes = cryptoService.generateDekBytes()
-    const recoveryKey = cryptoService.generateRecoveryKey()
 
     const masterKey = await cryptoService.deriveMasterKey(
       masterPassword,
       salt,
       MASTER_KDF_ITERATIONS,
     )
-    const recoveryAesKey = await cryptoService.recoveryKeyToAesKey(recoveryKey)
-
     const masterWrappedDek = await cryptoService.encryptBytes(masterKey, dekBytes, MASTER_WRAP_AAD)
     const recoveryWrappedDek = await cryptoService.encryptBytes(
       recoveryAesKey,
@@ -110,6 +135,7 @@ export class VaultService {
 
 
   async recoverAndResetMasterPassword(recoveryKey: string, newPassword: string): Promise<void> {
+    assertAcceptableMasterPassword(newPassword)
     const metadata = await this.requireMetadata()
 
     try {
@@ -146,6 +172,43 @@ export class VaultService {
     } catch {
       throw new Error('Invalid recovery key.')
     }
+  }
+
+  /**
+   * Replaces this device's vault with `backup`, but only after proving that `secret` (the
+   * backup's master password or recovery key) unwraps the backup's DEK and that every entry
+   * decrypts. On any failure storage is untouched. On success the vault is left unlocked.
+   */
+  async restoreBackup(source: VaultBackupFile, secret: string): Promise<void> {
+    // Work on a plain copy: callers may pass UI-reactive proxies, which IndexedDB cannot
+    // store, and the copy guarantees the data written is exactly the data verified.
+    const backup = JSON.parse(JSON.stringify(source)) as VaultBackupFile
+    const dekBytes = await this.unwrapBackupDek(backup.metadata, secret)
+    let dek: CryptoKey
+    try {
+      dek = await cryptoService.importAesKey(dekBytes)
+    } finally {
+      dekBytes.fill(0)
+    }
+
+    try {
+      await Promise.all(
+        backup.entries.map(async (entry) =>
+          (await cryptoService.decryptBytes(dek, entry.payload, entryAad(entry.id))).fill(0),
+        ),
+      )
+    } catch {
+      throw new Error(DAMAGED_BACKUP)
+    }
+
+    await this.storage.replaceFromBackup(backup)
+    await this.storage.setLastBackupAt(backup.exportedAt)
+    this.dek = dek
+  }
+
+  /** Number of stored (encrypted) entries. Non-secret, so it works while locked. */
+  async storedEntryCount(): Promise<number> {
+    return (await this.storage.listEntries()).length
   }
 
   lock(): void {
@@ -200,6 +263,7 @@ export class VaultService {
   }
 
   async changeMasterPassword(currentPassword: string, newPassword: string): Promise<void> {
+    assertAcceptableMasterPassword(newPassword)
     const metadata = await this.requireMetadata()
 
     await this.unlockWithMasterPassword(currentPassword)
@@ -240,6 +304,27 @@ export class VaultService {
     await this.storage.setMetadata(metadata)
     dekBytes.fill(0)
     void dek
+  }
+
+  /** Tries `secret` as the backup's recovery key, then as its master password. */
+  private async unwrapBackupDek(metadata: VaultMetadata, secret: string): Promise<Uint8Array> {
+    try {
+      const recoveryAesKey = await cryptoService.recoveryKeyToAesKey(secret)
+      return await cryptoService.decryptBytes(recoveryAesKey, metadata.recoveryWrappedDek, RECOVERY_WRAP_AAD)
+    } catch {
+      // Not this backup's recovery key; try it as a master password below.
+    }
+
+    try {
+      const masterKey = await cryptoService.deriveMasterKey(
+        secret,
+        base64UrlToBytes(metadata.kdf.salt),
+        metadata.kdf.iterations,
+      )
+      return await cryptoService.decryptBytes(masterKey, metadata.masterWrappedDek, MASTER_WRAP_AAD)
+    } catch {
+      throw new Error(WRONG_BACKUP_SECRET)
+    }
   }
 
   private async requireMetadata(): Promise<VaultMetadata> {

@@ -2,11 +2,56 @@
 
 Written 2026-09-22 from a review of `README.md` against the actual source,
 config, CI, and hosting files. Load this file at the start of a session to
-resume the work. Nothing below has been implemented yet; the only pending
-change in the working tree is an uncommitted edit to `src/views/SetupView.vue`
-(see Phase 2, item 6).
+resume the work.
 
-Suggested order: Phase 1 first, then Phase 2 items 1, 2 and 5, then the
+## Status: resume here (updated 2026-11-22)
+
+**Next up:** Phase 2 item 3 (version migration hook), then Phase 3: change
+master password UI, auto-lock, periodic recovery key check, clipboard clear.
+Phase 1 (README) last, so it describes the finished behaviour.
+
+**Done** (unit tests + Playwright checks in Chromium and WebKit, dummy data):
+
+| Item | Summary |
+| --- | --- |
+| 2.1 | `BackupService` takes a `StorageAdapter`. |
+| 2.2 | `parseBackup` strictly validates; `VaultService.restoreBackup(backup, secret)` proves the master password or recovery key and decrypts every entry before replacing anything. Restore UI shows backup date/entry count, replace warning, "export current vault first". |
+| 2.4 | Export uses the share sheet on touch devices (`deliverBackupFile.ts`), download elsewhere; dismissing is not an error and is not recorded as a backup. Restore file picker has no `accept` filter (iOS greys out `.pvault`). |
+| 2.5 | Service worker in prompt mode; `UpdateBanner.vue` ("Update now" / "Later", hidden on `/setup`), hourly + on-resume update check; version and build time in footer. |
+| 2.6 | 12-character minimum, no composition rules, enforced in `VaultService` via `utils/masterPassword.ts`. |
+| 3 | Recovery key confirmation: 3-step setup; vault created only after the key is pasted back; clipboard cleared before the paste step. |
+
+**Bugs found and fixed along the way:** restore failed with `DataCloneError`
+(Vue reactive proxy passed to IndexedDB; the fake adapter now structured-clones
+like IndexedDB); setup tap swallowed by a layout shift when a stale error
+cleared on blur (errors now re-check on input).
+
+**Awaiting on-device check in production (iPhone, installed app):**
+1. Export opens the share sheet → Save to Files; "Last backup: today" appears.
+   Dismissing shows no error. If Export does nothing, Safari may have blocked
+   the share call (it runs after an async IndexedDB read).
+2. Import can select the saved `.pvault` in Files; restore works.
+3. Setup step 3: check whether Paste still offers the key (iOS may refuse to
+   clear the clipboard; the flow still works).
+4. After a deploy, reopening the app shows the update banner; "Update now"
+   changes the footer build time.
+
+**Decisions:** single user; device testing happens in production, so item 2.7
+(HTTPS dev script) is dropped. Master password policy settled (2.6).
+
+**README must later cover (Phase 1 additions):** 12-char policy, 3-step setup
+with key confirmation, restore flow (secret checked first, nothing changes on
+failure), share-sheet export, update banner and footer version.
+
+**Testing notes:** browser checks are Python Playwright scripts (setup,
+restore, share/export, update-on-production-build). They live in the session
+scratchpad, not the repo, so they may need recreating. On this Windows machine
+the webapp-testing `with_server.py` helper leaves servers running; stop
+leftovers on ports 5173/4173 after runs.
+
+---
+
+Original suggested order: Phase 1 first, then Phase 2 items 1, 2 and 5, then the
 emergency kit and setup confirmation from Phase 3 / Part C, since those
 directly attack data loss.
 
@@ -122,12 +167,12 @@ directly attack data loss.
 
 ### Phase 2: Low-risk code fixes, each with tests
 
-1. [ ] **Route BackupService through the adapter.**
+1. [x] **Route BackupService through the adapter.**
        Give `BackupService` a constructor that takes a `StorageAdapter`,
        mirroring `VaultService`; export a singleton bound to `indexedDbStorage`.
        Lets backup tests use `src/test/fakeStorageAdapter.ts`.
 
-2. [ ] **Pre-flight the import before replacing anything.**
+2. [x] **Pre-flight the import before replacing anything.**
        Move restore into `VaultService.restoreBackup(backup, secret)` where
        `secret` is either a master password or a recovery key. BackupService
        only parses/serialises. Steps:
@@ -149,21 +194,27 @@ directly attack data loss.
        the KDF change later. Test: unknown/newer version rejected, v1 passes
        through.
 
-4. [ ] **Fix export on iOS.** Try `navigator.canShare({ files })` and use
+4. [ ] **Fix export on iOS.** *(Implemented 2026-11-22 in
+       `services/backup/deliverBackupFile.ts`; awaiting on-device check in production.)* Try `navigator.canShare({ files })` and use
        `navigator.share({ files: [new File(...)] })`; fall back to the anchor
        download. Verify on a real device in standalone mode.
 
-5. [ ] **Switch the service worker to prompt mode.** Set `registerType` to
+5. [x] **Switch the service worker to prompt mode.** *(Done 2026-11-22:
+       `components/layout/UpdateBanner.vue`, hourly + on-resume update check,
+       version/build time in the footer.)* Set `registerType` to
        `'prompt'` in `vite.config.ts`; show an "Update available" banner via
        the `virtual:pwa-register/vue` helper (`useRegisterSW`). Never reload
        underneath the user.
 
-6. [ ] **Settle the master password policy (needs a decision).**
+6. [x] **Settle the master password policy (needs a decision).**
+       Decided 2026-11-22: 12-character minimum, no composition rules, enforced
+       in `VaultService` (setup, recovery reset, change) via `utils/masterPassword.ts`.
        Recommendation: 12-char minimum, no composition rules. The uncommitted
        SetupView diff currently does 8 chars + composition. Decide, adjust
        the diff, commit, and document in README.
 
-7. [ ] **HTTPS dev script.** Add `@vitejs/plugin-basic-ssl` as a devDependency
+7. [-] **Dropped:** device testing happens on the production deployment instead.
+       ~~**HTTPS dev script.**~~ Add `@vitejs/plugin-basic-ssl` as a devDependency
        behind a `dev:https` script (`vite --host` with the plugin gated by an
        env flag) so the app can be tested on a phone over LAN.
 
@@ -172,7 +223,8 @@ directly attack data loss.
 - [ ] **Change master password UI.** Settings sheet in `VaultView.vue` calling
       `vaultService.changeMasterPassword`. While there, remove the redundant
       second key derivation and the `void dek` in that method.
-- [ ] **Recovery key confirmation at setup.** Require the user to paste the
+- [x] **Recovery key confirmation at setup.** *(Done 2026-11-22: 3-step setup; the
+      vault is only created after the key is pasted back.)* Require the user to paste the
       key back before continuing. Cheapest single change that reduces loss.
 - [ ] **Periodic recovery key check.** Store non-secret
       `recoveryKeyVerifiedAt` in metadata (optional field, or bump metadata to

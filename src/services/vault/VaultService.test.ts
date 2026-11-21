@@ -39,6 +39,25 @@ describe('VaultService', () => {
     expect(vault.isUnlocked()).toBe(true)
   })
 
+  it('creates the vault with a recovery key generated before setup', async () => {
+    const recoveryKey = vault.newRecoveryKey()
+    expect(await storage.hasVault()).toBe(false)
+
+    expect(await vault.setup(MASTER_PASSWORD, recoveryKey)).toBe(recoveryKey)
+    vault.lock()
+    await vault.unlockWithRecoveryKey(recoveryKey)
+    expect(vault.isUnlocked()).toBe(true)
+  })
+
+  it('generates a different recovery key each time', () => {
+    expect(vault.newRecoveryKey()).not.toBe(vault.newRecoveryKey())
+  })
+
+  it('refuses a malformed pre-generated recovery key and stores nothing', async () => {
+    await expect(vault.setup(MASTER_PASSWORD, 'not-a-real-recovery-key')).rejects.toThrow('Invalid recovery key.')
+    expect(await storage.hasVault()).toBe(false)
+  })
+
   it('rejects an invalid recovery key', async () => {
     await vault.setup(MASTER_PASSWORD)
     vault.lock()
@@ -75,5 +94,32 @@ describe('VaultService', () => {
 
     expect(vault.isUnlocked()).toBe(false)
     await expect(vault.listEntries()).rejects.toThrow('Vault is locked.')
+  })
+
+  describe('master password policy', () => {
+    const SHORT = 'Short-pw1!' // 10 characters
+    const TOO_SHORT = 'Use a master password of at least 12 characters.'
+
+    it('refuses to create a vault with a short master password', async () => {
+      await expect(vault.setup(SHORT)).rejects.toThrow(TOO_SHORT)
+      expect(await storage.hasVault()).toBe(false)
+    })
+
+    it('refuses a short new password during recovery and keeps the old one', async () => {
+      const recoveryKey = await vault.setup(MASTER_PASSWORD)
+      vault.lock()
+
+      await expect(vault.recoverAndResetMasterPassword(recoveryKey, SHORT)).rejects.toThrow(TOO_SHORT)
+      expect(vault.isUnlocked()).toBe(false)
+      await vault.unlockWithMasterPassword(MASTER_PASSWORD)
+    })
+
+    it('refuses to change to a short master password', async () => {
+      await vault.setup(MASTER_PASSWORD)
+
+      await expect(vault.changeMasterPassword(MASTER_PASSWORD, SHORT)).rejects.toThrow(TOO_SHORT)
+      vault.lock()
+      await vault.unlockWithMasterPassword(MASTER_PASSWORD)
+    })
   })
 })

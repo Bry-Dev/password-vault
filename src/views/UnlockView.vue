@@ -1,14 +1,13 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRouter } from 'vue-router'
 import StatusAlert from '@/components/ui/StatusAlert.vue'
 import RestoreBackupButton from '@/components/vault/RestoreBackupButton.vue'
 import { useVaultStore } from '@/stores/vault'
+import { masterPasswordProblem } from '@/utils/masterPassword'
 
 const vault = useVaultStore()
 const router = useRouter()
-const route = useRoute()
-const restored = ref(route.query.restored === '1')
 const mode = ref<'master' | 'recovery'>('master')
 const secret = ref('')
 const newPassword = ref('')
@@ -27,9 +26,8 @@ async function unlock(): Promise<void> {
     if (mode.value === 'master') {
       await vault.unlockWithMasterPassword(secret.value)
     } else {
-      if (newPassword.value.length < 12) {
-        throw new Error('Use a new master password of at least 12 characters.')
-      }
+      const problem = masterPasswordProblem(newPassword.value)
+      if (problem) throw new Error(problem)
       if (newPassword.value !== confirmNewPassword.value) {
         throw new Error('The new master passwords do not match.')
       }
@@ -44,11 +42,8 @@ async function unlock(): Promise<void> {
   }
 }
 
-function onRestored(): void {
-  error.value = ''
-  mode.value = 'master'
-  secret.value = ''
-  restored.value = true
+async function onRestored(): Promise<void> {
+  await router.replace('/vault')
 }
 </script>
 
@@ -77,9 +72,6 @@ function onRestored(): void {
       </button>
     </div>
 
-    <StatusAlert v-if="restored && !error" kind="success" class="mt-4">
-      Backup restored. Unlock it with the master password that was in use when the backup was made, or with its recovery key.
-    </StatusAlert>
     <StatusAlert v-if="error" kind="error" class="mt-4">{{ error }}</StatusAlert>
 
     <form class="mt-5 space-y-4" @submit.prevent="unlock">
@@ -129,7 +121,7 @@ function onRestored(): void {
     <div class="mt-6 border-t border-slate-200 pt-5">
       <p class="text-sm font-semibold text-slate-800">Restore an encrypted backup</p>
       <p class="mt-1 text-xs leading-5 text-slate-500">Use this after reinstalling the PWA or moving an exported vault to another device.</p>
-      <RestoreBackupButton class="mt-3" :replaces-existing="true" @restored="onRestored" />
+      <RestoreBackupButton class="mt-3" @restored="onRestored" />
     </div>
   </section>
 </template>

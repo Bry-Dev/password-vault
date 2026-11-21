@@ -1,84 +1,140 @@
-import { beforeEach, describe, expect, it } from 'vitest'
-import { BackupService } from './BackupService'
+import { beforeAll, describe, expect, it } from 'vitest'
+import { BackupService, parseBackup } from './BackupService'
 import { VaultService } from '@/services/vault/VaultService'
 import { InMemoryStorageAdapter } from '@/test/fakeStorageAdapter'
+import type { VaultBackupFile } from '@/types/vault'
+import type { DeliveryPlatform } from './deliverBackupFile'
 
 const MASTER_PASSWORD = 'correct-horse-battery-staple-1'
 const ENTRY = { title: 'Example', username: 'user', password: 's3cr3t-value', url: '', notes: '' }
+const UNSUPPORTED = 'This file is not a supported Local Vault backup.'
+const NEWER = 'This backup was created by a newer version of the app.'
 
 describe('BackupService', () => {
   let sourceStorage: InMemoryStorageAdapter
   let recoveryKey: string
+  let validText: string
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     sourceStorage = new InMemoryStorageAdapter()
     const sourceVault = new VaultService(sourceStorage)
     recoveryKey = await sourceVault.setup(MASTER_PASSWORD)
     await sourceVault.saveEntry(ENTRY)
+    validText = JSON.stringify(await new BackupService(sourceStorage).createBackup())
   })
 
-  async function exportedText(): Promise<string> {
-    return JSON.stringify(await new BackupService(sourceStorage).createBackup())
+  /** A deep copy of the valid backup, changed by `mutate`, as JSON text. */
+  function variant(mutate: (backup: VaultBackupFile & Record<string, unknown>) => void): string {
+    const backup = JSON.parse(validText)
+    mutate(backup)
+    return JSON.stringify(backup)
   }
 
-  it('does not include plaintext entry values in the backup', async () => {
-    const text = await exportedText()
-    expect(text).not.toContain(ENTRY.password)
-    expect(text).not.toContain(MASTER_PASSWORD)
-    expect(text).not.toContain(recoveryKey)
-  })
-
-  it('restores onto an empty device and unlocks with the master password', async () => {
-    const freshStorage = new InMemoryStorageAdapter()
-    await new BackupService(freshStorage).restoreFromText(await exportedText())
-
-    const vault = new VaultService(freshStorage)
-    expect(await vault.isInitialized()).toBe(true)
-    await vault.unlockWithMasterPassword(MASTER_PASSWORD)
-    const entries = await vault.listEntries()
-    expect(entries).toHaveLength(1)
-    expect(entries[0].password).toBe(ENTRY.password)
-  })
-
-  it('restores onto an empty device and unlocks with the recovery key', async () => {
-    const freshStorage = new InMemoryStorageAdapter()
-    await new BackupService(freshStorage).restoreFromText(await exportedText())
-
-    const vault = new VaultService(freshStorage)
-    await vault.unlockWithRecoveryKey(recoveryKey)
-    expect((await vault.listEntries())[0].title).toBe(ENTRY.title)
-  })
-
-  it('records the restored backup date as the last backup', async () => {
-    const text = await exportedText()
-    const freshStorage = new InMemoryStorageAdapter()
-    const backups = new BackupService(freshStorage)
-
-    expect(await backups.getLastBackupAt()).toBeUndefined()
-    await backups.restoreFromText(text)
-    expect(await backups.getLastBackupAt()).toBe(JSON.parse(text).exportedAt)
-  })
-
-  it('rejects a file that is not JSON without touching storage', async () => {
-    const freshStorage = new InMemoryStorageAdapter()
-    await expect(new BackupService(freshStorage).restoreFromText('not json')).rejects.toThrow(
-      'This file is not a supported Local Vault backup.',
-    )
-    expect(await freshStorage.hasVault()).toBe(false)
-  })
-
-  it('rejects JSON in the wrong format without touching storage', async () => {
-    const freshStorage = new InMemoryStorageAdapter()
-    const wrong = JSON.stringify({ format: 'something-else', version: 1, metadata: {}, entries: [] })
-    await expect(new BackupService(freshStorage).restoreFromText(wrong)).rejects.toThrow(
-      'This file is not a supported Local Vault backup.',
-    )
-    expect(await freshStorage.hasVault()).toBe(false)
+  it('does not include plaintext entry values in the backup', () => {
+    expect(validText).not.toContain(ENTRY.password)
+    expect(validText).not.toContain(MASTER_PASSWORD)
+    expect(validText).not.toContain(recoveryKey)
   })
 
   it('refuses to create a backup when no vault exists', async () => {
     await expect(new BackupService(new InMemoryStorageAdapter()).createBackup()).rejects.toThrow(
       'No vault exists on this device.',
     )
+  })
+
+  describe('exportBackup', () => {
+    function platform(result: 'share' | 'cancel' | 'desktop') {
+      const delivered: File[] = []
+      const p: DeliveryPlatform = {
+        prefersShare: () => result !== 'desktop',
+        canShareFiles: () => true,
+        share: async (data) => {
+          if (result === 'cancel') throw new DOMException('dismissed', 'AbortError')
+          delivered.push(...(data.files ?? []))
+        },
+        download: (file) => delivered.push(file),
+      }
+      return { p, delivered }
+    }
+
+    it('delivers a dated .pvault file containing the encrypted backup', async () => {
+      const { p, delivered } = platform('share')
+      expect(await new BackupService(sourceStorage).exportBackup(p)).toBe('shared')
+
+      expect(delivered).toHaveLength(1)
+      expect(delivered[0].name).toMatch(/^local-vault-\d{4}-\d{2}-\d{2}\.pvault$/)
+      const restored = parseBackup(await delivered[0].text())
+      expect(restored.entries).toHaveLength(1)
+      expect(await delivered[0].text()).not.toContain(ENTRY.password)
+    })
+
+    it('records the export as the last backup when shared or downloaded', async () => {
+      for (const mode of ['share', 'desktop'] as const) {
+        const storage = new InMemoryStorageAdapter()
+        await new VaultService(storage).setup(MASTER_PASSWORD)
+        const backups = new BackupService(storage)
+
+        await backups.exportBackup(platform(mode).p)
+        expect(await backups.getLastBackupAt()).toBeDefined()
+      }
+    })
+
+    it('does not record a backup when the share sheet is dismissed', async () => {
+      const storage = new InMemoryStorageAdapter()
+      await new VaultService(storage).setup(MASTER_PASSWORD)
+      const backups = new BackupService(storage)
+
+      expect(await backups.exportBackup(platform('cancel').p)).toBe('cancelled')
+      expect(await backups.getLastBackupAt()).toBeUndefined()
+    })
+  })
+
+  describe('parseBackup', () => {
+    it('accepts a backup it created', () => {
+      expect(parseBackup(validText)).toEqual(JSON.parse(validText))
+    })
+
+    it('rejects a file that is not JSON', () => {
+      expect(() => parseBackup('not json')).toThrow(UNSUPPORTED)
+    })
+
+    it('rejects JSON in the wrong format', () => {
+      expect(() => parseBackup(variant((b) => (b.format = 'something-else' as never)))).toThrow(UNSUPPORTED)
+    })
+
+    it('rejects a backup file version newer than this app', () => {
+      expect(() => parseBackup(variant((b) => (b.version = 2 as never)))).toThrow(NEWER)
+    })
+
+    it('rejects vault metadata newer than this app', () => {
+      expect(() => parseBackup(variant((b) => (b.metadata.version = 2 as never)))).toThrow(NEWER)
+    })
+
+    it('rejects an entry without an IV', () => {
+      const text = variant((b) => delete (b.entries[0].payload as Partial<{ iv: string }>).iv)
+      expect(() => parseBackup(text)).toThrow(UNSUPPORTED)
+    })
+
+    it('rejects an entry without timestamps', () => {
+      const text = variant((b) => delete (b.entries[0] as Partial<{ updatedAt: string }>).updatedAt)
+      expect(() => parseBackup(text)).toThrow(UNSUPPORTED)
+    })
+
+    it('rejects duplicate entry ids', () => {
+      const text = variant((b) => b.entries.push({ ...b.entries[0] }))
+      expect(() => parseBackup(text)).toThrow(UNSUPPORTED)
+    })
+
+    it('rejects metadata without a master-wrapped key', () => {
+      const text = variant((b) => delete (b.metadata as Partial<VaultBackupFile['metadata']>).masterWrappedDek)
+      expect(() => parseBackup(text)).toThrow(UNSUPPORTED)
+    })
+
+    it('rejects unusable KDF iterations', () => {
+      expect(() => parseBackup(variant((b) => (b.metadata.kdf.iterations = 0)))).toThrow(UNSUPPORTED)
+      expect(() => parseBackup(variant((b) => (b.metadata.kdf.iterations = 1.5)))).toThrow(UNSUPPORTED)
+      // A crafted file must not be able to freeze the device during the password check.
+      expect(() => parseBackup(variant((b) => (b.metadata.kdf.iterations = 1e12)))).toThrow(UNSUPPORTED)
+    })
   })
 })
